@@ -1,0 +1,100 @@
+# ==============================================================================
+# MongoDB — production-grade single-node deployment
+# All tunables live in .env. Do not hardcode values here.
+#   docker compose up -d
+# ==============================================================================
+
+name: ${COMPOSE_PROJECT_NAME}
+
+services:
+  mongodb:
+    image: ${MONGO_IMAGE}
+    container_name: ${MONGO_CONTAINER_NAME}
+    hostname: ${MONGO_HOSTNAME}
+    restart: unless-stopped
+    stop_grace_period: 60s
+
+    # --- Authentication enabled.
+    #     --bind_ip_all makes Mongo listen on all interfaces INSIDE the
+    #     container (required for container-to-container traffic on mongo_net).
+    #     Exposure to the host network is controlled exclusively by the
+    #     `ports` mapping below (default: 127.0.0.1 only). ---
+    command:
+      - "--auth"
+      - "--bind_ip_all"
+      - "--wiredTigerCacheSizeGB=${MONGO_WIREDTIGER_CACHE_GB}"
+
+    environment:
+      # Root admin account (created on first boot only).
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      # Consumed by the init script to provision a least-privilege app user.
+      MONGO_APP_DB: ${MONGO_APP_DB}
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD}
+      TZ: ${TZ}
+
+    ports:
+      # Defaults to 127.0.0.1 — Mongo is NOT reachable from the network.
+      # To expose externally set MONGO_BIND_HOST=0.0.0.0 in .env
+      # (only do this behind a firewall / VPN).
+      - "${MONGO_BIND_HOST}:${MONGO_PORT}:27017"
+
+    volumes:
+      # Bind mounts — data lands exactly where you set the paths in .env.
+      # Defaults to ./data and ./config (relative to this compose file).
+      # Before first boot, create dirs and fix ownership:
+      #   mkdir -p data config
+      #   chown -R 999:999 data config   # 999 = mongodb UID inside container
+      - ${MONGO_DATA_PATH}:/data/db
+      - ${MONGO_CONFIG_PATH}:/data/configdb
+      # Init script runs ONCE, only when the data directory is empty.
+      - ./init/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+
+    healthcheck:
+      # Uses a dedicated monitor user (created by mongo-init.js) so that
+      # the root credentials are never exposed in the process list.
+      test:
+        - "CMD"
+        - "mongosh"
+        - "--quiet"
+        - "--username=${MONGO_MONITOR_USERNAME}"
+        - "--password=${MONGO_MONITOR_PASSWORD}"
+        - "--authenticationDatabase=admin"
+        - "--eval=db.adminCommand('ping').ok"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+    # --- Hardening ---
+    security_opt:
+      - no-new-privileges:true
+    ulimits:
+      nofile:
+        soft: 64000
+        hard: 64000
+
+    # --- Resource caps ---
+    deploy:
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT}"
+          memory: ${MEM_LIMIT}
+        reservations:
+          cpus: "${CPU_RESERVATION}"
+          memory: ${MEM_RESERVATION}
+
+    # --- Log rotation so disks don't fill up ---
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE}
+        max-file: ${LOG_MAX_FILE}
+
+    networks:
+      - mongo_net
+
+networks:
+  mongo_net:
+    driver: bridge
