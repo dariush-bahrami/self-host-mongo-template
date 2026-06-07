@@ -25,13 +25,13 @@ services:
       - "--wiredTigerCacheSizeGB=${MONGO_WIREDTIGER_CACHE_GB}"
 
     environment:
-      # Root admin account (created on first boot only).
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
-      # Consumed by the init script to provision a least-privilege app user.
       MONGO_APP_DB: ${MONGO_APP_DB}
       MONGO_APP_USERNAME: ${MONGO_APP_USERNAME}
       MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD}
+      MONGO_MONITOR_USERNAME: ${MONGO_MONITOR_USERNAME}
+      MONGO_MONITOR_PASSWORD: ${MONGO_MONITOR_PASSWORD}
       TZ: ${TZ}
 
     ports:
@@ -52,16 +52,9 @@ services:
       - ./init/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
 
     healthcheck:
-      # Uses a dedicated monitor user (created by mongo-init.js) so that
-      # the root credentials are never exposed in the process list.
       test:
-        - "CMD"
-        - "mongosh"
-        - "--quiet"
-        - "--username=${MONGO_MONITOR_USERNAME}"
-        - "--password=${MONGO_MONITOR_PASSWORD}"
-        - "--authenticationDatabase=admin"
-        - "--eval=db.adminCommand('ping').ok"
+        - "CMD-SHELL"
+        - "mongosh --quiet --username $$MONGO_MONITOR_USERNAME --password $$MONGO_MONITOR_PASSWORD --authenticationDatabase admin --eval \"db.adminCommand('ping').ok\""
       interval: 30s
       timeout: 10s
       retries: 5
